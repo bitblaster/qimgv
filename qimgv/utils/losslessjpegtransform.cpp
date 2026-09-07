@@ -61,9 +61,7 @@ QRect mapRect(QRect r, DihedralOp op, QSize srcSize) {
 #include <cstring>
 #include <turbojpeg.h>
 
-#ifdef USE_EXIV2
-#include <exiv2/exiv2.hpp>
-#endif
+#include "utils/exifmetadata.h"
 
 namespace LosslessJpegTransform {
 
@@ -125,40 +123,6 @@ static bool readHeader(const QByteArray &src, int &width, int &height, int &subs
     return rc == 0 && subsamp >= 0 && subsamp < TJ_NUMSAMP;
 }
 
-#ifdef USE_EXIV2
-// Rewrites the Exif Orientation tag to 1 (Normal) in `jpegBytes`, in
-// place. The pixel data has just been physically transformed to its
-// upright orientation by a lossless JPEG transform, which does not
-// touch EXIF markers - so any pre-existing Orientation tag would now be
-// stale and needs to be normalized to avoid a spurious re-rotation the
-// next time the file is displayed. Failures are ignored (best-effort):
-// EXIF preservation is a nice-to-have, not a correctness requirement.
-static void normalizeExifOrientation(QByteArray &jpegBytes) {
-    try {
-        auto image = Exiv2::ImageFactory::open(
-            reinterpret_cast<const Exiv2::byte*>(jpegBytes.constData()), jpegBytes.size());
-        if(!image.get())
-            return;
-        image->readMetadata();
-        Exiv2::ExifData &exifData = image->exifData();
-        if(exifData.empty())
-            return;
-        exifData["Exif.Image.Orientation"] = uint16_t(1);
-        image->writeMetadata();
-        Exiv2::BasicIo &io = image->io();
-        jpegBytes = QByteArray(reinterpret_cast<const char*>(io.mmap()), static_cast<int>(io.size()));
-    }
-#if not EXIV2_TEST_VERSION(0, 28, 0)
-    catch(Exiv2::BasicError<char>&) {
-        // best-effort: keep the transformed bytes with their original (now stale) tag
-    }
-#endif
-    catch(Exiv2::Error&) {
-        // best-effort: keep the transformed bytes with their original (now stale) tag
-    }
-}
-#endif // USE_EXIV2
-
 // Whether the file is a progressive JPEG, found by walking the marker
 // segments to the frame header. tjTransform() always writes a baseline
 // image unless told otherwise, so without this a progressive file would
@@ -196,6 +160,15 @@ static bool isProgressive(const QByteArray &src) {
         i += 2 + segmentLength;
     }
     return false;
+}
+
+// The transform copies the metadata markers over untouched, so the parts
+// of them that describe the image as it was still need fixing up.
+static void fixUpMetadata(QByteArray &jpegBytes) {
+    int width, height, subsamp;
+    if(!readHeader(jpegBytes, width, height, subsamp))
+        return;
+    ExifMetadata::fixUpInPlace(jpegBytes, QSize(width, height));
 }
 
 static bool runSingleTransform(const QByteArray &src, int tjOp, bool withCrop,
@@ -354,9 +327,7 @@ Result tryTransform(const QString &filePath, DihedralOp op, std::optional<QRect>
     }
 
     outJpegBytes = result;
-#ifdef USE_EXIV2
-    normalizeExifOrientation(outJpegBytes);
-#endif
+    fixUpMetadata(outJpegBytes);
     return Result::Ok;
 }
 
@@ -395,9 +366,7 @@ QByteArray transformWithAlignmentTrim(const QString &filePath, DihedralOp op, st
                       cPost.height() - (alignedY - cPost.y()));
         QByteArray result;
         if(nudged.width() > 0 && nudged.height() > 0 && runOpThenCrop(src, op, nudged, result)) {
-#ifdef USE_EXIV2
-            normalizeExifOrientation(result);
-#endif
+            fixUpMetadata(result);
             return result;
         }
     }
@@ -436,9 +405,7 @@ QByteArray transformWithAlignmentTrim(const QString &filePath, DihedralOp op, st
     if(!runCropThenOp(src, op, region, result))
         return QByteArray();
 
-#ifdef USE_EXIV2
-    normalizeExifOrientation(result);
-#endif
+    fixUpMetadata(result);
     return result;
 }
 

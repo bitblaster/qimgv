@@ -1,5 +1,6 @@
 #include "imagestatic.h"
 #include <time.h>
+#include "utils/exifmetadata.h"
 
 ImageStatic::ImageStatic(QString _path)
     : Image(_path)
@@ -95,6 +96,12 @@ bool ImageStatic::save(QString destPath) {
 
     bool backupExists = false, success = false, originalExists = false;
 
+    // Qt writes the image without any of the metadata the source file
+    // had, so it gets carried over by hand afterwards - read now, while
+    // the source file is still there to read it from (saving over it is
+    // the common case).
+    ExifMetadata::Bundle metadata = ExifMetadata::read(mPath);
+
     if(QFile::exists(destPath))
         originalExists = true;
 
@@ -127,6 +134,8 @@ bool ImageStatic::save(QString destPath) {
             QFile::remove(tmpPath);
         }
     }
+    if(success)
+        ExifMetadata::writeTo(metadata, destPath, size());
     // Only when we wrote over the image's own file do the pending edits
     // become "already applied": a save-as elsewhere leaves this file (and
     // the displayed edits) untouched, so the queue has to stay put.

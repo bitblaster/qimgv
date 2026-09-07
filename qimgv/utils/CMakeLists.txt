@@ -13,4 +13,5 @@ target_sources(qimgv PRIVATE
     wallpapersetter.cpp
     fileoperations.cpp
     losslessjpegtransform.cpp
+    exifmetadata.cpp
 )
