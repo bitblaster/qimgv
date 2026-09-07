@@ -261,6 +261,15 @@ void SettingsDialog::readSettings() {
     ui->JPEGQualitySlider->setValue(settings->JPEGSaveQuality());
     onJPEGQualitySliderChanged(ui->JPEGQualitySlider->value());
 
+#ifdef USE_TURBOJPEG
+    ui->losslessRotationCheckBox->setChecked(settings->losslessRotation());
+#else
+    ui->losslessRotationCheckBox->setChecked(false);
+    ui->losslessRotationCheckBox->setEnabled(false);
+    ui->losslessRotationCheckBox->setToolTip(tr("qimgv was built without libjpeg-turbo support, lossless rotation is unavailable."));
+#endif
+    onLosslessRotationToggled(ui->losslessRotationCheckBox->isChecked());
+
     ui->expandLimitSlider->setValue(settings->expandLimit());
     onExpandLimitSliderChanged(ui->expandLimitSlider->value());
 
@@ -408,6 +417,7 @@ void SettingsDialog::saveSettings() {
     settings->setPanelPreviewsSize(ui->panelSizeSlider->value() * 10);
 
     settings->setJPEGSaveQuality(ui->JPEGQualitySlider->value());
+    settings->setLosslessRotation(ui->losslessRotationCheckBox->isChecked());
     settings->setZoomStep(static_cast<qreal>(ui->zoomStepSlider->value() / 100.f));
     settings->setMouseScrollingSpeed(static_cast<qreal>(0.5f + (ui->mouseScrollingSpeedSlider->value() * 0.25f)));
     settings->setAutoResizeLimit(ui->autoResizeLimitSlider->value() * 5);
@@ -728,6 +738,12 @@ void SettingsDialog::onExpandLimitSliderChanged(int value) {
 //------------------------------------------------------------------------------
 void SettingsDialog::onJPEGQualitySliderChanged(int value) {
     ui->JPEGQualityLabel->setText(QString::number(value) + "%");
+}
+//------------------------------------------------------------------------------
+void SettingsDialog::onLosslessRotationToggled(bool checked) {
+    ui->JPEGQualitySlider->setEnabled(!checked);
+    ui->JPEGQualityLabel->setEnabled(!checked);
+    ui->label_3->setEnabled(!checked);
 }
 //------------------------------------------------------------------------------
 void SettingsDialog::onZoomStepSliderChanged(int value) {

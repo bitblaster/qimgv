@@ -113,6 +113,7 @@ private:
 
     PanelPosition panelPosition;
     CurrentInfo info;
+    QSize cropMcuSize;
 #if QT_VERSION < QT_VERSION_CHECK(5, 14, 0)
     QDesktopWidget desktopWidget;
 #endif
@@ -233,6 +234,7 @@ public slots:
     void close();
     void triggerCropPanel();
     void updateCropPanelData();
+    void setCropMcuSize(QSize size);
     void showSaveOverlay();
     void hideSaveOverlay();
     void showChangelogWindow();

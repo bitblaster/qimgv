@@ -1,4 +1,5 @@
 #include "directorymodel.h"
+#include "sourcecontainers/imagestatic.h"
 
 DirectoryModel::DirectoryModel(QObject *parent) :
     QObject(parent),
@@ -273,6 +274,31 @@ bool DirectoryModel::saveFile(const QString &filePath, const QString &destPath) 
         return false;
     auto img = cache.get(filePath);
     if(img->save(destPath)) {
+        if(filePath == destPath) { // replace
+            dirManager.updateFileEntry(destPath);
+            emit fileModified(destPath);
+        } else { // manually add if we are saving to the same dir
+            QFileInfo fiSrc(filePath);
+            QFileInfo fiDest(destPath);
+            // handle same dir
+            if(fiSrc.absolutePath() == fiDest.absolutePath()) {
+                // overwrite
+                if(!dirManager.containsFile(destPath) && dirManager.insertFileEntry(destPath))
+                    emit fileModified(destPath);
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+bool DirectoryModel::saveFileLossless(const QString &filePath, const QString &destPath, const QByteArray &jpegBytes) {
+    if(!containsFile(filePath) || !cache.contains(filePath))
+        return false;
+    auto img = std::dynamic_pointer_cast<ImageStatic>(cache.get(filePath));
+    if(!img)
+        return false;
+    if(img->saveLosslessBytes(destPath, jpegBytes)) {
         if(filePath == destPath) { // replace
             dirManager.updateFileEntry(destPath);
             emit fileModified(destPath);

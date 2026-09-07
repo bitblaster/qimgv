@@ -93,8 +93,21 @@ private:
     std::shared_ptr<ImageStatic> getEditableImage(const QString &filePath);
     QList<QString> currentSelection();
 
+    // `onEdited` gets the image and its size from before the edit was
+    // applied, so a crop can be recorded in the coordinates it was
+    // drawn in. Leave it empty for edits that can't be replayed as a
+    // JPEG transform - lossless tracking is then dropped.
     template<typename... Args>
-    void edit_template(bool save, QString actionName, const std::function<QImage*(std::shared_ptr<const QImage>, Args...)>& func, Args&&... as);
+    void edit_template(bool save, QString actionName,
+                        const std::function<QImage*(std::shared_ptr<const QImage>, Args...)>& func,
+                        const std::function<void(std::shared_ptr<ImageStatic>, QSize)>& onEdited,
+                        Args&&... as);
+
+    static bool isJpegPath(const QString &path);
+    bool losslessTrackingApplies(std::shared_ptr<ImageStatic> img);
+    void trackLosslessRotate(std::shared_ptr<ImageStatic> img, int degrees);
+    void trackLosslessFlip(std::shared_ptr<ImageStatic> img, bool horizontal);
+    void trackLosslessCrop(std::shared_ptr<ImageStatic> img, QRect rect, QSize sizeBeforeCrop);
 
     void doInteractiveCopy(QString path, QString destDirectory, DialogResult &overwriteAllFiles);
     void doInteractiveMove(QString path, QString destDirectory, DialogResult &overwriteAllFiles);

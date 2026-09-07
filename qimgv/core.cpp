@@ -7,6 +7,11 @@
 
 #include "core.h"
 
+#include <QFileInfo>
+#include <QMessageBox>
+#include <QPushButton>
+#include "utils/losslessjpegtransform.h"
+
 #ifdef __WIN32
 #include <tchar.h>
 #endif
@@ -981,7 +986,10 @@ std::shared_ptr<ImageStatic> Core::getEditableImage(const QString &filePath) {
 }
 
 template<typename... Args>
-void Core::edit_template(bool save, QString action, const std::function<QImage*(std::shared_ptr<const QImage>, Args...)>& editFunc, Args&&... as) {
+void Core::edit_template(bool save, QString action,
+                          const std::function<QImage*(std::shared_ptr<const QImage>, Args...)>& editFunc,
+                          const std::function<void(std::shared_ptr<ImageStatic>, QSize)>& onEdited,
+                          Args&&... as) {
     if(model->isEmpty())
         return;
     if(save && !mw->showConfirmation(action, tr("Perform action \"") + action + "\"? \n\n" + tr("Changes will be saved immediately.")))
@@ -990,7 +998,12 @@ void Core::edit_template(bool save, QString action, const std::function<QImage*(
         auto img = getEditableImage(path);
         if(!img)
             continue;
+        QSize sizeBeforeEdit = img->size();
         img->setEditedImage(std::unique_ptr<const QImage>( editFunc(img->getImage(), std::forward<Args>(as)...) ));
+        if(onEdited)
+            onEdited(img, sizeBeforeEdit);
+        else
+            img->invalidatePendingLossless(); // can't be replayed as a JPEG transform
         model->updateImage(path, std::static_pointer_cast<Image>(img));
         if(save) {
             saveFile(path);
@@ -1001,32 +1014,82 @@ void Core::edit_template(bool save, QString action, const std::function<QImage*(
     updateInfoString();
 }
 
+bool Core::isJpegPath(const QString &path) {
+    QString ext = QFileInfo(path).suffix();
+    return ext.compare("jpg", Qt::CaseInsensitive) == 0 || ext.compare("jpeg", Qt::CaseInsensitive) == 0;
+}
+
+// The tracking below records what the user did in a form that can be
+// replayed on the JPEG file itself at save time (see
+// LosslessJpegTransform::PendingTransform). Rotates, flips and crops mix
+// freely; anything else (a resize) gives up on lossless tracking and
+// leaves the save to the regular raster/lossy path.
+void Core::trackLosslessRotate(std::shared_ptr<ImageStatic> img, int degrees) {
+    using Op = LosslessJpegTransform::DihedralOp;
+    Op requested = Op::None;
+    if(degrees == 90)
+        requested = Op::Rotate90;
+    else if(degrees == -90 || degrees == 270)
+        requested = Op::Rotate270;
+    if(!losslessTrackingApplies(img) || requested == Op::None) {
+        img->invalidatePendingLossless();
+        return;
+    }
+    img->addPendingLosslessOp(requested);
+}
+
+void Core::trackLosslessFlip(std::shared_ptr<ImageStatic> img, bool horizontal) {
+    if(!losslessTrackingApplies(img)) {
+        img->invalidatePendingLossless();
+        return;
+    }
+    img->addPendingLosslessOp(horizontal ? LosslessJpegTransform::DihedralOp::Mirror
+                                          : LosslessJpegTransform::DihedralOp::Flip);
+}
+
+void Core::trackLosslessCrop(std::shared_ptr<ImageStatic> img, QRect rect, QSize sizeBeforeCrop) {
+    if(!losslessTrackingApplies(img)) {
+        img->invalidatePendingLossless();
+        return;
+    }
+    img->addPendingLosslessCrop(rect, sizeBeforeCrop);
+}
+
+bool Core::losslessTrackingApplies(std::shared_ptr<ImageStatic> img) {
+    return settings->losslessRotation() && isJpegPath(img->filePath());
+}
+
 void Core::flipH() {
-    edit_template((mw->currentViewMode() == MODE_FOLDERVIEW), tr("Flip horizontal"), { ImageLib::flippedH });
+    edit_template((mw->currentViewMode() == MODE_FOLDERVIEW), tr("Flip horizontal"), { ImageLib::flippedH },
+                  [this](std::shared_ptr<ImageStatic> img, QSize) { trackLosslessFlip(img, true); });
 }
 
 void Core::flipV() {
-    edit_template((mw->currentViewMode() == MODE_FOLDERVIEW), tr("Flip vertical"), { ImageLib::flippedV });
+    edit_template((mw->currentViewMode() == MODE_FOLDERVIEW), tr("Flip vertical"), { ImageLib::flippedV },
+                  [this](std::shared_ptr<ImageStatic> img, QSize) { trackLosslessFlip(img, false); });
 }
 
 void Core::rotateByDegrees(int degrees) {
-    edit_template((mw->currentViewMode() == MODE_FOLDERVIEW), tr("Rotate"), { ImageLib::rotated }, degrees);
+    edit_template((mw->currentViewMode() == MODE_FOLDERVIEW), tr("Rotate"), { ImageLib::rotated },
+                  [this, degrees](std::shared_ptr<ImageStatic> img, QSize) { trackLosslessRotate(img, degrees); }, degrees);
 }
 
 void Core::resize(QSize size) {
-    edit_template(false, tr("Resize"), { ImageLib::scaled }, size, QI_FILTER_BILINEAR);
+    edit_template(false, tr("Resize"), { ImageLib::scaled }, nullptr, size, QI_FILTER_BILINEAR);
 }
 
 void Core::crop(QRect rect) {
     if(mw->currentViewMode() == MODE_FOLDERVIEW)
         return;
-    edit_template(false, tr("Crop"), { ImageLib::cropped }, rect);
+    edit_template(false, tr("Crop"), { ImageLib::cropped },
+                  [this, rect](std::shared_ptr<ImageStatic> img, QSize sizeBefore) { trackLosslessCrop(img, rect, sizeBefore); }, rect);
 }
 
 void Core::cropAndSave(QRect rect) {
     if(mw->currentViewMode() == MODE_FOLDERVIEW)
         return;
-    edit_template(false, tr("Crop"), { ImageLib::cropped }, rect);
+    edit_template(false, tr("Crop"), { ImageLib::cropped },
+                  [this, rect](std::shared_ptr<ImageStatic> img, QSize sizeBefore) { trackLosslessCrop(img, rect, sizeBefore); }, rect);
     saveFile(selectedPath());
     updateInfoString();
 }
@@ -1038,8 +1101,63 @@ bool Core::saveFile(const QString &filePath) {
 }
 
 bool Core::saveFile(const QString &filePath, const QString &newPath) {
-    if(!model->saveFile(filePath, newPath))
+    bool losslessHandled = false;
+    bool saved = false;
+
+    auto imgStatic = getEditableImage(filePath);
+#ifdef USE_TURBOJPEG
+    // isJpegPath(newPath) too: a save-as that changes the format has to
+    // go through the raster path, or we'd write JPEG bytes into a file
+    // named .png
+    if(imgStatic && settings->losslessRotation() && isJpegPath(filePath) && isJpegPath(newPath)
+       && imgStatic->hasPendingLosslessChanges()) {
+        auto pending = imgStatic->pendingLossless();
+        QByteArray outBytes;
+        auto result = LosslessJpegTransform::tryTransform(filePath, pending.op(), pending.crop(), outBytes);
+        if(result == LosslessJpegTransform::Result::NotAligned) {
+            QMessageBox msgBox(mw);
+            msgBox.setWindowTitle(tr("Lossless rotation"));
+            msgBox.setIcon(QMessageBox::Warning);
+            msgBox.setText(tr("These edits don't line up with JPEG's internal pixel blocks, so they "
+                               "can't be applied without losing quality.\n\n"
+                               "A few pixels can be trimmed off the edges to make them fit, or the "
+                               "image can be re-encoded at the JPEG quality set in preferences."));
+            QAbstractButton *trimButton = msgBox.addButton(tr("Trim a few pixels"), QMessageBox::AcceptRole);
+            QAbstractButton *lossyButton = msgBox.addButton(tr("Save with quality loss"), QMessageBox::DestructiveRole);
+            msgBox.addButton(QMessageBox::Cancel);
+            msgBox.setDefaultButton(static_cast<QPushButton*>(trimButton));
+            msgBox.setModal(true);
+            msgBox.exec();
+            QAbstractButton *clicked = msgBox.clickedButton();
+            if(clicked == trimButton) {
+                outBytes = LosslessJpegTransform::transformWithAlignmentTrim(filePath, pending.op(), pending.crop());
+                result = outBytes.isEmpty() ? LosslessJpegTransform::Result::Failed : LosslessJpegTransform::Result::Ok;
+            } else if(clicked == lossyButton) {
+                result = LosslessJpegTransform::Result::Failed; // falls through to the raster path below
+            } else {
+                return false; // cancelled
+            }
+        }
+        if(result == LosslessJpegTransform::Result::Ok) {
+            saved = model->saveFileLossless(filePath, newPath, outBytes);
+            if(saved)
+                model->reload(newPath);
+            losslessHandled = true;
+        }
+        // anything else (Failed, or the user picked "save with quality loss")
+        // falls through to the regular raster/lossy path below
+    }
+#else
+    (void)imgStatic;
+#endif
+
+    if(!losslessHandled) {
+        if(!model->saveFile(filePath, newPath))
+            return false;
+    } else if(!saved) {
         return false;
+    }
+
     mw->hideSaveOverlay();
     // switch to the new file
     if(model->containsFile(newPath) && state.currentFilePath != newPath) {
@@ -1073,6 +1191,7 @@ void Core::discardEdits() {
     if(img && img->type() == STATIC) {
         auto imgStatic = dynamic_cast<ImageStatic *>(img.get());
         imgStatic->discardEditedImage();
+        imgStatic->resetPendingLossless();
         model->updateImage(selectedPath(), img);
     }
     mw->hideSaveOverlay();
@@ -1520,13 +1639,21 @@ void Core::updateInfoString() {
     QSize imageSize(0,0);
     qint64 fileSize = 0;
     bool edited = false;
+    QSize cropMcuSize;
 
     if(model->isLoaded(state.currentFilePath)) {
         auto img = model->getImage(state.currentFilePath);
         imageSize = img->size();
         fileSize  = img->fileSize();
         edited = img->isEdited();
+        // feeds the crop tool the grid a selection has to line up with
+        // for the crop to stay lossless
+        if(settings->losslessRotation() && isJpegPath(state.currentFilePath)) {
+            if(auto imgStatic = std::dynamic_pointer_cast<ImageStatic>(img))
+                cropMcuSize = imgStatic->losslessMcuSize();
+        }
     }
+    mw->setCropMcuSize(cropMcuSize);
     int index = model->indexOfFile(state.currentFilePath);
     mw->setCurrentInfo(index,
                        model->fileCount(),

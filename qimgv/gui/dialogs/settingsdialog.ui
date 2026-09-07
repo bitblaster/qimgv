@@ -4754,6 +4754,16 @@
                    </widget>
                   </item>
                   <item>
+                   <widget class="QCheckBox" name="losslessRotationCheckBox">
+                    <property name="toolTip">
+                     <string>Rotate/flip/crop JPEG files losslessly (no recompression, EXIF tags are kept) instead of re-encoding them at the quality below.</string>
+                    </property>
+                    <property name="text">
+                     <string>Lossless rotation</string>
+                    </property>
+                   </widget>
+                  </item>
+                  <item>
                    <layout class="QHBoxLayout" name="horizontalLayout_10">
                     <property name="leftMargin">
                      <number>0</number>
@@ -5397,6 +5407,22 @@ li.checked::marker { content: &quot;\2612&quot;; }
    </hints>
   </connection>
   <connection>
+   <sender>losslessRotationCheckBox</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>SettingsDialog</receiver>
+   <slot>onLosslessRotationToggled(bool)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>369</x>
+     <y>104</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>642</x>
+     <y>110</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
    <sender>pushButton_8</sender>
    <signal>clicked()</signal>
    <receiver>SettingsDialog</receiver>
@@ -5787,6 +5813,7 @@ li.checked::marker { content: &quot;\2612&quot;; }
   <slot>onExpandLimitSliderChanged(int)</slot>
   <slot>onZoomStepSliderChanged(int)</slot>
   <slot>onJPEGQualitySliderChanged(int)</slot>
+  <slot>onLosslessRotationToggled(bool)</slot>
   <slot>saveSettingsAndClose()</slot>
   <slot>saveSettings()</slot>
   <slot>editShortcut()</slot>

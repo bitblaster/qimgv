@@ -1,5 +1,7 @@
 #include "mainwindow.h"
 
+#include <QFileInfo>
+
 // TODO: nuke this and rewrite
 
 MW::MW(QWidget *parent)
@@ -676,7 +678,17 @@ void MW::updateCropPanelData() {
         cropOverlay->setImageDrawRect(viewerWidget->imageRect());
         cropOverlay->setImageScale(viewerWidget->currentScale());
         cropOverlay->setImageRealSize(viewerWidget->sourceSize());
+        cropOverlay->setMcuSize(cropMcuSize);
     }
+}
+
+// The MCU grid a crop selection should snap to for the crop to stay
+// lossless, pushed in by Core (which knows the file and what's already
+// been done to it). An empty size means don't snap.
+void MW::setCropMcuSize(QSize size) {
+    cropMcuSize = size;
+    if(cropOverlay && activeSidePanel == SIDEPANEL_CROP)
+        cropOverlay->setMcuSize(size);
 }
 
 void MW::showSaveOverlay() {

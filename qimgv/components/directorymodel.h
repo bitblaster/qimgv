@@ -69,6 +69,7 @@ public:
 
     bool saveFile(const QString &filePath);
     bool saveFile(const QString &filePath, const QString &destPath);
+    bool saveFileLossless(const QString &filePath, const QString &destPath, const QByteArray &jpegBytes);
 
     bool containsDir(QString dirPath) const;
     FileListSource source();

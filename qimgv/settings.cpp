@@ -881,6 +881,14 @@ void Settings::setJPEGSaveQuality(int value) {
     settings->settingsConf->setValue("JPEGSaveQuality", value);
 }
 //------------------------------------------------------------------------------
+bool Settings::losslessRotation() {
+    return settings->settingsConf->value("losslessRotation", true).toBool();
+}
+
+void Settings::setLosslessRotation(bool mode) {
+    settings->settingsConf->setValue("losslessRotation", mode);
+}
+//------------------------------------------------------------------------------
 ScalingFilter Settings::scalingFilter() {
     int defaultFilter = 1;
 #ifdef USE_OPENCV
