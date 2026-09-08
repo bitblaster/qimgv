@@ -190,6 +190,15 @@ bool ImageStatic::saveLosslessBytes(QString destPath, const QByteArray &jpegByte
     if(success && destPath == mPath) {
         markPendingLosslessSaved();
         mDocInfo->refresh();
+        // The bytes we just wrote decode to exactly what imageEdited already
+        // holds - the lossless path only ever runs on edits that are pure JPEG
+        // transforms - so promote it to the source image instead of making the
+        // caller reload from disk. That keeps the current zoom and pan, and
+        // leaves both split panes looking at the same, no longer edited, Image.
+        if(isEdited()) {
+            image.swap(imageEdited);
+            discardEditedImage();
+        }
     }
     return success;
 }

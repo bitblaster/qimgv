@@ -1114,6 +1114,7 @@ bool Core::saveFile(const QString &filePath) {
 bool Core::saveFile(const QString &filePath, const QString &newPath) {
     bool losslessHandled = false;
     bool saved = false;
+    bool trimmed = false;
 
     auto imgStatic = getEditableImage(filePath);
 #ifdef USE_TURBOJPEG
@@ -1143,6 +1144,7 @@ bool Core::saveFile(const QString &filePath, const QString &newPath) {
             if(clicked == trimButton) {
                 outBytes = LosslessJpegTransform::transformWithAlignmentTrim(filePath, pending.op(), pending.crop());
                 result = outBytes.isEmpty() ? LosslessJpegTransform::Result::Failed : LosslessJpegTransform::Result::Ok;
+                trimmed = (result == LosslessJpegTransform::Result::Ok);
             } else if(clicked == lossyButton) {
                 result = LosslessJpegTransform::Result::Failed; // falls through to the raster path below
             } else {
@@ -1151,7 +1153,14 @@ bool Core::saveFile(const QString &filePath, const QString &newPath) {
         }
         if(result == LosslessJpegTransform::Result::Ok) {
             saved = model->saveFileLossless(filePath, newPath, outBytes);
-            if(saved)
+            // Saving over the file itself already promoted the edited image to
+            // the source one, so what is on screen matches what is on disk and
+            // there is nothing to reload - which also keeps the current zoom.
+            // Two cases still need the file read back: a trim shaves a few
+            // pixels off the edges that the in-memory copy doesn't have, and a
+            // save-as leaves this image untouched while overwriting another one
+            // that may well be cached.
+            if(saved && (trimmed || newPath != filePath))
                 model->reload(newPath);
             losslessHandled = true;
         }
@@ -1646,7 +1655,10 @@ void Core::onLoadFailed(const QString &path) {
 }
 
 void Core::onModelItemReady(std::shared_ptr<Image> img, const QString &path) {
-    if(splitMode != SPLIT_NONE && path == inactivePane->filePath && path != activePane->filePath)
+    // both panes can sit on the same file, and the reload after a lossless save
+    // hands out a brand new Image - the inactive pane has to pick it up too, or
+    // it keeps a stale one that still claims to have unsaved edits
+    if(splitMode != SPLIT_NONE && path == inactivePane->filePath)
         guiSetImageInactive(img);
     if(path == activePane->filePath) {
         guiSetImage(img);
