@@ -124,6 +124,8 @@ signals:
     void print();
     void toggleFullscreenInfoBar();
     void pasteFile();
+    void splitView();
+    void splitViewSwitchFocus();
 };
 
 extern ActionManager *actionManager;

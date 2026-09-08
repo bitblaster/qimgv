@@ -81,6 +81,12 @@ enum ViewMode {
     MODE_FOLDERVIEW
 };
 
+enum SplitViewMode {
+    SPLIT_NONE,
+    SPLIT_HORIZONTAL, // two panes, side by side
+    SPLIT_VERTICAL    // two panes, one above the other
+};
+
 enum FolderEndAction {
     FOLDER_END_NO_ACTION,
     FOLDER_END_LOOP,

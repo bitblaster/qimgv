@@ -608,7 +608,9 @@ void ImageViewerV2::wheelEvent(QWheelEvent *event) {
             zoomInCursor();
         else if(angleDelta < 0)
             zoomOutCursor();
-    } else if(event->modifiers() == Qt::NoModifier) {
+    } else if(event->modifiers() == Qt::NoModifier || event->modifiers() == Qt::ShiftModifier) {
+        // Shift scrolls just like no modifier does; in split view it also
+        // mirrors the scroll onto the other pane
         QPoint pixelDelta = event->pixelDelta();
         QPoint angleDelta = event->angleDelta();
         /* for reference
@@ -664,6 +666,9 @@ void ImageViewerV2::wheelEvent(QWheelEvent *event) {
                 vs->setValue(vs->value() - dy * TRACKPAD_SCROLL_MULTIPLIER);
                 centerIfNecessary();
                 snapToEdges();
+                if(!scrollSyncGuard)
+                    emit scrolled(qRound(-dx * TRACKPAD_SCROLL_MULTIPLIER),
+                                  qRound(-dy * TRACKPAD_SCROLL_MULTIPLIER), false);
             }
         } else if(isWheel && settings->imageScrolling() == SCROLL_BY_TRACKPAD_AND_WHEEL) {
             // scroll by interval
@@ -974,6 +979,17 @@ void ImageViewerV2::scroll(int dx, int dy, bool smooth) {
     } else {
         scrollPrecise(dx, dy);
     }
+    if(!scrollSyncGuard)
+        emit scrolled(dx, dy, smooth);
+}
+
+// apply a scroll delta coming from another viewer; do not echo it back
+void ImageViewerV2::scrollRelative(int dx, int dy, bool smooth) {
+    if(!dx && !dy)
+        return;
+    scrollSyncGuard = true;
+    scroll(dx, dy, smooth);
+    scrollSyncGuard = false;
 }
 
 void ImageViewerV2::scrollSmooth(int dx, int dy) {

@@ -7,13 +7,18 @@
 MW::MW(QWidget *parent)
     : FloatingWidgetContainer(parent),
       currentDisplay(0),
+      mActiveViewer(nullptr),
+      mSplitMode(SPLIT_NONE),
+      mSplitFocus(0),
       maximized(false),
       activeSidePanel(SIDEPANEL_NONE),
       copyOverlay(nullptr),
-      saveOverlay(nullptr),
+      saveOverlay{nullptr, nullptr},
       renameOverlay(nullptr),
       infoBarFullscreen(nullptr),
       imageInfoOverlay(nullptr),
+      imageInfoOverlaySecondary(nullptr),
+      infoOverlayVisible{false, false},
       floatingMessage(nullptr),
       cropPanel(nullptr),
       cropOverlay(nullptr)
@@ -61,8 +66,10 @@ MW::MW(QWidget *parent)
  */
 void MW::setupUi() {
     viewerWidget.reset(new ViewerWidget(this));
+    viewerWidgetSecondary.reset(new ViewerWidget(this));
+    mActiveViewer = viewerWidget.get();
     infoBarWindowed.reset(new InfoBarProxy(this));
-    docWidget.reset(new DocumentWidget(viewerWidget, infoBarWindowed));
+    docWidget.reset(new DocumentWidget(viewerWidget, viewerWidgetSecondary, infoBarWindowed));
     folderView.reset(new FolderViewProxy(this));
     connect(folderView.get(), &FolderViewProxy::sortingSelected, this, &MW::sortingSelected);
     connect(folderView.get(), &FolderViewProxy::directorySelected, this, &MW::opened);
@@ -77,30 +84,175 @@ void MW::setupUi() {
     sidePanel = new SidePanel(this);
     layout.addWidget(sidePanel);
     imageInfoOverlay = new ImageInfoOverlayProxy(viewerWidget.get());
+    imageInfoOverlaySecondary = new ImageInfoOverlayProxy(viewerWidgetSecondary.get());
     floatingMessage = new FloatingMessageProxy(viewerWidget.get()); // todo: use additional one for folderview?
-    connect(viewerWidget.get(), &ViewerWidget::scalingRequested, this, &MW::scalingRequested);
-    connect(viewerWidget.get(), &ViewerWidget::draggedOut, this, qOverload<>(&MW::draggedOut));
-    connect(viewerWidget.get(), &ViewerWidget::playbackFinished, this, &MW::playbackFinished);
+    // a scale request belongs to whichever pane holds the focus frame,
+    // not to a fixed one
+    for(auto *v : {viewerWidget.get(), viewerWidgetSecondary.get()}) {
+        connect(v, &ViewerWidget::scalingRequested, this, [this, v](QSize size, ScalingFilter filter) {
+            if(v == activeViewer())
+                emit scalingRequested(size, filter);
+            else
+                emit scalingRequestedInactive(size, filter);
+        });
+        connect(v, &ViewerWidget::draggedOut, this, qOverload<>(&MW::draggedOut));
+        connect(v, &ViewerWidget::playbackFinished, this, &MW::playbackFinished);
+    }
     connect(viewerWidget.get(), &ViewerWidget::showScriptSettings, this, &MW::showScriptSettings);
-    connect(this, &MW::zoomIn,        viewerWidget.get(), &ViewerWidget::zoomIn);
-    connect(this, &MW::zoomOut,       viewerWidget.get(), &ViewerWidget::zoomOut);
-    connect(this, &MW::zoomInCursor,  viewerWidget.get(), &ViewerWidget::zoomInCursor);
-    connect(this, &MW::zoomOutCursor, viewerWidget.get(), &ViewerWidget::zoomOutCursor);
-    connect(this, &MW::scrollUp,    viewerWidget.get(), &ViewerWidget::scrollUp);
-    connect(this, &MW::scrollDown,  viewerWidget.get(), &ViewerWidget::scrollDown);
-    connect(this, &MW::scrollLeft,  viewerWidget.get(), &ViewerWidget::scrollLeft);
-    connect(this, &MW::scrollRight, viewerWidget.get(), &ViewerWidget::scrollRight);
-    connect(this, &MW::pauseVideo,     viewerWidget.get(), &ViewerWidget::pauseResumePlayback);
-    connect(this, &MW::stopPlayback,   viewerWidget.get(), &ViewerWidget::stopPlayback);
-    connect(this, &MW::seekVideoForward, viewerWidget.get(), &ViewerWidget::seekForward);
-    connect(this, &MW::seekVideoBackward,  viewerWidget.get(), &ViewerWidget::seekBackward);
-    connect(this, &MW::frameStep,      viewerWidget.get(), &ViewerWidget::frameStep);
-    connect(this, &MW::frameStepBack,  viewerWidget.get(), &ViewerWidget::frameStepBack);
-    connect(this, &MW::toggleMute,  viewerWidget.get(), &ViewerWidget::toggleMute);
-    connect(this, &MW::volumeUp,  viewerWidget.get(), &ViewerWidget::volumeUp);
-    connect(this, &MW::volumeDown,  viewerWidget.get(), &ViewerWidget::volumeDown);
-    connect(this, &MW::toggleTransparencyGrid, viewerWidget.get(), &ViewerWidget::toggleTransparencyGrid);
+    connect(viewerWidgetSecondary.get(), &ViewerWidget::showScriptSettings, this, &MW::showScriptSettings);
     connect(this, &MW::setLoopPlayback,  viewerWidget.get(), &ViewerWidget::setLoopPlayback);
+    connect(this, &MW::setLoopPlayback,  viewerWidgetSecondary.get(), &ViewerWidget::setLoopPlayback);
+    // scroll sync between the two panes (while Ctrl is held)
+    connect(viewerWidget.get(), &ViewerWidget::scrolled, this, [this](int dx, int dy, bool smooth) {
+        syncScroll(viewerWidget.get(), dx, dy, smooth);
+    });
+    connect(viewerWidgetSecondary.get(), &ViewerWidget::scrolled, this, [this](int dx, int dy, bool smooth) {
+        syncScroll(viewerWidgetSecondary.get(), dx, dy, smooth);
+    });
+    setViewerActionsConnected(viewerWidget.get(), true);
+}
+
+// everything the user can aim at a single pane goes to the focused viewer only
+void MW::setViewerActionsConnected(ViewerWidget *w, bool connected) {
+    if(!w)
+        return;
+    struct Link {
+        void (MW::*from)();
+        void (ViewerWidget::*to)();
+    };
+    static const Link links[] = {
+        { &MW::zoomIn,             &ViewerWidget::zoomIn },
+        { &MW::zoomOut,            &ViewerWidget::zoomOut },
+        { &MW::zoomInCursor,       &ViewerWidget::zoomInCursor },
+        { &MW::zoomOutCursor,      &ViewerWidget::zoomOutCursor },
+        { &MW::scrollUp,           &ViewerWidget::scrollUp },
+        { &MW::scrollDown,         &ViewerWidget::scrollDown },
+        { &MW::scrollLeft,         &ViewerWidget::scrollLeft },
+        { &MW::scrollRight,        &ViewerWidget::scrollRight },
+        { &MW::pauseVideo,         &ViewerWidget::pauseResumePlayback },
+        { &MW::stopPlayback,       &ViewerWidget::stopPlayback },
+        { &MW::seekVideoForward,   &ViewerWidget::seekForward },
+        { &MW::seekVideoBackward,  &ViewerWidget::seekBackward },
+        { &MW::frameStep,          &ViewerWidget::frameStep },
+        { &MW::frameStepBack,      &ViewerWidget::frameStepBack },
+        { &MW::toggleMute,         &ViewerWidget::toggleMute },
+        { &MW::volumeUp,           &ViewerWidget::volumeUp },
+        { &MW::volumeDown,         &ViewerWidget::volumeDown },
+        { &MW::toggleTransparencyGrid, &ViewerWidget::toggleTransparencyGrid },
+    };
+    for(const auto &link : links) {
+        if(connected)
+            connect(this, link.from, w, link.to);
+        else
+            disconnect(this, link.from, w, link.to);
+    }
+}
+
+ViewerWidget *MW::activeViewer() {
+    return mActiveViewer;
+}
+
+ViewerWidget *MW::inactiveViewer() {
+    return (mActiveViewer == viewerWidget.get()) ? viewerWidgetSecondary.get()
+                                                 : viewerWidget.get();
+}
+
+ImageInfoOverlayProxy *MW::activeInfoOverlay() {
+    return splitFocusIndex() ? imageInfoOverlaySecondary : imageInfoOverlay;
+}
+
+ImageInfoOverlayProxy *MW::inactiveInfoOverlay() {
+    return splitFocusIndex() ? imageInfoOverlay : imageInfoOverlaySecondary;
+}
+
+void MW::updateActiveViewer() {
+    ViewerWidget *target = (mSplitMode != SPLIT_NONE && mSplitFocus == 1)
+                            ? viewerWidgetSecondary.get() : viewerWidget.get();
+    if(target == mActiveViewer)
+        return;
+    setViewerActionsConnected(mActiveViewer, false);
+    mActiveViewer = target;
+    setViewerActionsConnected(mActiveViewer, true);
+    if(currentViewMode() == MODE_DOCUMENT)
+        mActiveViewer->setFocus();
+}
+
+SplitViewMode MW::splitViewMode() {
+    return mSplitMode;
+}
+
+int MW::splitFocusIndex() {
+    return (mSplitMode == SPLIT_NONE) ? 0 : mSplitFocus;
+}
+
+void MW::setSplitViewMode(SplitViewMode mode) {
+    if(mSplitMode == mode)
+        return;
+    mSplitMode = mode;
+    if(mode == SPLIT_NONE)
+        mSplitFocus = 0;
+    updateActiveViewer();
+    docWidget->setSplitViewMode(mode);
+    docWidget->setSplitFocus(mSplitFocus);
+    if(mode == SPLIT_NONE) {
+        viewerWidgetSecondary->closeImage();
+        imageInfoOverlaySecondary->hide();
+    } else {
+        viewerWidgetSecondary->setInteractionEnabled(viewerWidget->interactionEnabled());
+        if(infoOverlayVisible[1])
+            imageInfoOverlaySecondary->show();
+    }
+}
+
+void MW::toggleSplitFocus() {
+    if(mSplitMode == SPLIT_NONE)
+        return;
+    mSplitFocus = mSplitFocus ? 0 : 1;
+    updateActiveViewer();
+    docWidget->setSplitFocus(mSplitFocus);
+    emit splitFocusToggled();
+}
+
+/* Mirrors a scroll from one pane onto the other one while Shift is held.
+ * The delta is rescaled by the zoom ratio, so the two images travel over
+ * the same amount of source pixels.
+ */
+void MW::syncScroll(ViewerWidget *source, int dx, int dy, bool smooth) {
+    if(mSplitMode == SPLIT_NONE)
+        return;
+    if(!(QGuiApplication::keyboardModifiers() & Qt::ShiftModifier))
+        return;
+    ViewerWidget *target = (source == viewerWidget.get()) ? viewerWidgetSecondary.get()
+                                                          : viewerWidget.get();
+    float sourceScale = source->currentScale();
+    if(sourceScale <= 0.0f)
+        return;
+    float ratio = target->currentScale() / sourceScale;
+    target->scrollRelative(qRound(dx * ratio), qRound(dy * ratio), smooth);
+}
+
+void MW::showImageInactive(std::unique_ptr<QPixmap> pixmap) {
+    inactiveViewer()->showImage(std::move(pixmap));
+}
+
+void MW::showAnimationInactive(std::shared_ptr<QMovie> movie) {
+    inactiveViewer()->showAnimation(movie);
+}
+
+void MW::showVideoInactive(QString file) {
+    inactiveViewer()->showVideo(file);
+}
+
+void MW::closeImageInactive() {
+    inactiveViewer()->closeImage();
+}
+
+void MW::onScalingFinishedInactive(std::unique_ptr<QPixmap> scaled) {
+    inactiveViewer()->onScalingFinished(std::move(scaled));
+}
+
+void MW::setExifInfoInactive(QVector<QPair<QString, QString>> info) {
+    inactiveInfoOverlay()->setExifInfo(info);
 }
 
 void MW::setupFullUi() {
@@ -130,11 +282,12 @@ void MW::setupCopyOverlay() {
     copyOverlay->setCurrentDirectory(info.directoryPath);
 }
 
-void MW::setupSaveOverlay() {
-    saveOverlay = new SaveConfirmOverlay(viewerWidget.get());
-    connect(saveOverlay, &SaveConfirmOverlay::saveClicked,    this, &MW::saveRequested);
-    connect(saveOverlay, &SaveConfirmOverlay::saveAsClicked,  this, &MW::saveAsClicked);
-    connect(saveOverlay, &SaveConfirmOverlay::discardClicked, this, &MW::discardEditsRequested);
+void MW::setupSaveOverlay(int pane) {
+    auto viewer = pane ? viewerWidgetSecondary.get() : viewerWidget.get();
+    saveOverlay[pane] = new SaveConfirmOverlay(viewer);
+    connect(saveOverlay[pane], &SaveConfirmOverlay::saveClicked,    this, &MW::saveRequested);
+    connect(saveOverlay[pane], &SaveConfirmOverlay::saveAsClicked,  this, &MW::saveAsClicked);
+    connect(saveOverlay[pane], &SaveConfirmOverlay::discardClicked, this, &MW::discardEditsRequested);
 }
 
 void MW::setupRenameOverlay() {
@@ -151,6 +304,7 @@ void MW::toggleFolderView() {
         renameOverlay->hide();
     docWidget->hideFloatingPanel();
     imageInfoOverlay->hide();
+    imageInfoOverlaySecondary->hide();
     centralWidget->toggleViewMode();
     onInfoUpdated();
 }
@@ -163,6 +317,7 @@ void MW::enableFolderView() {
         renameOverlay->hide();
     docWidget->hideFloatingPanel();
     imageInfoOverlay->hide();
+    imageInfoOverlaySecondary->hide();
     centralWidget->showFolderView();
     onInfoUpdated();
 }
@@ -177,32 +332,32 @@ ViewMode MW::currentViewMode() {
 }
 
 void MW::fitWindow() {
-    if(viewerWidget->interactionEnabled()) {
-        viewerWidget->fitWindow();
+    if(activeViewer()->interactionEnabled()) {
+        activeViewer()->fitWindow();
     } else {
         showMessage("Zoom temporary disabled");
     }
 }
 
 void MW::fitWidth() {
-    if(viewerWidget->interactionEnabled()) {
-        viewerWidget->fitWidth();
+    if(activeViewer()->interactionEnabled()) {
+        activeViewer()->fitWidth();
     } else {
         showMessage("Zoom temporary disabled");
     }
 }
 
 void MW::fitOriginal() {
-    if(viewerWidget->interactionEnabled()) {
-        viewerWidget->fitOriginal();
+    if(activeViewer()->interactionEnabled()) {
+        activeViewer()->fitOriginal();
     } else {
         showMessage("Zoom temporary disabled");
     }
 }
 
 void MW::fitWindowStretch() {
-    if(viewerWidget->interactionEnabled()) {
-        viewerWidget->fitWindowStretch();
+    if(activeViewer()->interactionEnabled()) {
+        activeViewer()->fitWindowStretch();
     } else {
         showMessage("Zoom temporary disabled");
     }
@@ -211,16 +366,16 @@ void MW::fitWindowStretch() {
 // switch between 1:1 and Fit All
 // TODO: move to viewerWidget?
 void MW::switchFitMode() {
-    if(viewerWidget->fitMode() == FIT_WINDOW)
-        viewerWidget->setFitMode(FIT_ORIGINAL);
+    if(activeViewer()->fitMode() == FIT_WINDOW)
+        activeViewer()->setFitMode(FIT_ORIGINAL);
     else
-        viewerWidget->setFitMode(FIT_WINDOW);
+        activeViewer()->setFitMode(FIT_WINDOW);
 }
 
 void MW::closeImage() {
     info.fileName = "";
     info.filePath = "";
-    viewerWidget->closeImage();
+    activeViewer()->closeImage();
 }
 
 // todo: fix flicker somehow
@@ -254,21 +409,21 @@ void MW::preShowResize(QSize sz) {
 void MW::showImage(std::unique_ptr<QPixmap> pixmap) {
     if(settings->autoResizeWindow())
         preShowResize(pixmap->size());
-    viewerWidget->showImage(std::move(pixmap));
+    activeViewer()->showImage(std::move(pixmap));
     updateCropPanelData();
 }
 
 void MW::showAnimation(std::shared_ptr<QMovie> movie) {
     if(settings->autoResizeWindow())
         preShowResize(movie->frameRect().size());
-    viewerWidget->showAnimation(movie);
+    activeViewer()->showAnimation(movie);
     updateCropPanelData();
 }
 
 void MW::showVideo(QString file) {
     if(settings->autoResizeWindow())
         preShowResize(QSize()); // tmp. find a way to get this though mpv BEFORE playback
-    viewerWidget->showVideo(file);
+    activeViewer()->showVideo(file);
 }
 
 void MW::showContextMenu() {
@@ -300,8 +455,8 @@ void MW::setDirectoryPath(QString path) {
 }
 
 void MW::toggleLockZoom() {
-    viewerWidget->toggleLockZoom();
-    if(viewerWidget->lockZoomEnabled())
+    activeViewer()->toggleLockZoom();
+    if(activeViewer()->lockZoomEnabled())
         showMessage("Zoom lock: ON");
     else
         showMessage("Zoom lock: OFF");
@@ -309,8 +464,8 @@ void MW::toggleLockZoom() {
 }
 
 void MW::toggleLockView() {
-    viewerWidget->toggleLockView();
-    if(viewerWidget->lockViewEnabled())
+    activeViewer()->toggleLockView();
+    if(activeViewer()->lockViewEnabled())
         showMessage("View lock: ON");
     else
         showMessage("View lock: OFF");
@@ -330,10 +485,10 @@ void MW::toggleFullscreenInfoBar() {
 void MW::toggleImageInfoOverlay() {
     if(centralWidget->currentViewMode() == MODE_FOLDERVIEW)
         return;
-    if(imageInfoOverlay->isHidden())
-        imageInfoOverlay->show();
-    else
-        imageInfoOverlay->hide();
+    auto overlay = activeInfoOverlay();
+    bool show = overlay->isHidden();
+    show ? overlay->show() : overlay->hide();
+    infoOverlayVisible[splitFocusIndex()] = show;
 }
 
 void MW::toggleRenameOverlay(QString currentName) {
@@ -350,7 +505,7 @@ void MW::toggleRenameOverlay(QString currentName) {
 
 void MW::toggleScalingFilter() {
     ScalingFilter configuredFilter = settings->scalingFilter();
-    if(viewerWidget->scalingFilter() == configuredFilter) {
+    if(activeViewer()->scalingFilter() == configuredFilter) {
         setFilterNearest();
     }
     else {
@@ -361,11 +516,13 @@ void MW::toggleScalingFilter() {
 void MW::setFilterNearest() {
     showMessage("Filter: nearest", 600);
     viewerWidget->setFilterNearest();
+    viewerWidgetSecondary->setFilterNearest();
 }
 
 void MW::setFilterBilinear() {
     showMessage("Filter: bilinear", 600);
     viewerWidget->setFilterBilinear();
+    viewerWidgetSecondary->setFilterBilinear();
 }
 
 void MW::setFilter(ScalingFilter filter) {
@@ -392,6 +549,7 @@ void MW::setFilter(ScalingFilter filter) {
     }
     showMessage("Filter " + filterName, 600);
     viewerWidget->setScalingFilter(filter);
+    viewerWidgetSecondary->setScalingFilter(filter);
 }
 
 bool MW::isCropPanelActive() {
@@ -399,7 +557,7 @@ bool MW::isCropPanelActive() {
 }
 
 void MW::onScalingFinished(std::unique_ptr<QPixmap> scaled) {
-    viewerWidget->onScalingFinished(std::move(scaled));
+    activeViewer()->onScalingFinished(std::move(scaled));
 }
 
 void MW::saveWindowGeometry() {
@@ -460,6 +618,21 @@ bool MW::event(QEvent *event) {
 void MW::keyPressEvent(QKeyEvent *event) {
     event->accept();
     actionManager->processEvent(event);
+}
+
+/* Qt eats Tab for focus navigation before it ever reaches keyPressEvent.
+ * Nothing in the viewer area is meant to be reached that way, and often no
+ * widget holds the focus at all, so let the shortcut through in those cases.
+ * Input fields (crop panel, rename overlay) keep the usual behaviour.
+ */
+bool MW::focusNextPrevChild(bool next) {
+    auto focused = qApp->focusWidget();
+    if(!focused || focused == viewerWidget.get() || focused == viewerWidgetSecondary.get() ||
+       viewerWidget->isAncestorOf(focused) || viewerWidgetSecondary->isAncestorOf(focused))
+    {
+        return false;
+    }
+    return FloatingWidgetContainer::focusNextPrevChild(next);
 }
 
 void MW::wheelEvent(QWheelEvent *event) {
@@ -691,18 +864,23 @@ void MW::setCropMcuSize(QSize size) {
         cropOverlay->setMcuSize(size);
 }
 
+/* The save prompt is an action on the file the shortcuts operate on, so it
+ * only ever shows up on the pane holding the focus frame.
+ */
 void MW::showSaveOverlay() {
+    hideSaveOverlay();
     if(!settings->showSaveOverlay())
         return;
-    if(!saveOverlay)
-        setupSaveOverlay();
-    saveOverlay->show();
+    int pane = splitFocusIndex();
+    if(!saveOverlay[pane])
+        setupSaveOverlay(pane);
+    saveOverlay[pane]->show();
 }
 
 void MW::hideSaveOverlay() {
-    if(!saveOverlay)
-        return;
-    saveOverlay->hide();
+    for(auto *overlay : saveOverlay)
+        if(overlay)
+            overlay->hide();
 }
 
 void MW::showChangelogWindow() {
@@ -743,6 +921,7 @@ void MW::showCropPanel() {
 void MW::setInteractionEnabled(bool mode) {
     docWidget->setInteractionEnabled(mode);
     viewerWidget->setInteractionEnabled(mode);
+    viewerWidgetSecondary->setInteractionEnabled(mode);
 }
 
 void MW::hideCropPanel() {
@@ -850,9 +1029,9 @@ void MW::onInfoUpdated() {
             states.append(" [slideshow]");
         if(info.shuffle)
             states.append(" [shuffle]");
-        if(viewerWidget->lockZoomEnabled())
+        if(activeViewer()->lockZoomEnabled())
             states.append(" [zoom lock]");
-        if(viewerWidget->lockViewEnabled())
+        if(activeViewer()->lockViewEnabled())
             states.append(" [view lock]");
 
         if(!settings->infoBarWindowed() && !states.isEmpty())
@@ -869,7 +1048,7 @@ void MW::onInfoUpdated() {
 // TODO!!! buffer this in mw
 void MW::setExifInfo(QVector<QPair<QString, QString>> info) {
     if(imageInfoOverlay)
-        imageInfoOverlay->setExifInfo(info);
+        activeInfoOverlay()->setExifInfo(info);
 }
 
 std::shared_ptr<FolderViewProxy> MW::getFolderView() {
@@ -1000,6 +1179,7 @@ void MW::adaptToWindowState() {
     folderView->onFullscreenModeChanged(isFullScreen());
     docWidget->onFullscreenModeChanged(isFullScreen());
     viewerWidget->onFullscreenModeChanged(isFullScreen());
+    viewerWidgetSecondary->onFullscreenModeChanged(isFullScreen());
 }
 
 void MW::paintEvent(QPaintEvent *event) {

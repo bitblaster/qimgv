@@ -21,12 +21,36 @@
 #include <malloc.h>
 #endif
 
+// the scaler only remembers one pending request, so in split view we have to
+// keep track of what each pane asked for and re-issue whatever got dropped
+struct PendingScaleRequest {
+    bool pending = false;
+    QSize size;
+    ScalingFilter filter = QI_FILTER_BILINEAR;
+};
+
+/* Everything that belongs to a single pane. In split view the two panes browse
+ * independently, so each one carries its own copy and switching the focus is
+ * just a matter of pointing at the other one.
+ */
+struct PaneState {
+    bool hasImage = false;
+    QString filePath = "";
+    std::shared_ptr<Image> img;
+    PendingScaleRequest scaleRequest;
+
+    void clear() {
+        hasImage = false;
+        filePath = "";
+        img = nullptr;
+        scaleRequest.pending = false;
+    }
+};
+
+// state shared by both panes
 struct State {
-    bool hasActiveImage = false;
     bool delayModel = false;
-    QString currentFilePath = "";
     QString directoryPath = "";
-    std::shared_ptr<Image> currentImg;
 };
 
 enum MimeDataTarget {
@@ -59,6 +83,11 @@ private:
     MW *mw;
 
     State state;
+    PaneState panes[2];
+    // always point at the pane holding the focus frame and at the other one
+    PaneState *activePane, *inactivePane;
+    void setActivePane(int index);
+
     bool loopSlideshow, slideshow, shuffle;
     FolderEndAction folderEndAction;
 
@@ -81,6 +110,11 @@ private:
     void attachModel(DirectoryModel *_model);
     QString selectedPath();
     void guiSetImage(std::shared_ptr<Image> img);
+    void guiSetImageInactive(std::shared_ptr<Image> img);
+
+    SplitViewMode splitMode = SPLIT_NONE;
+    void setSplitViewMode(SplitViewMode mode);
+    void loadInactiveImage(const QString &path);
     QTimer slideshowTimer;
 
     void startSlideshowTimer();
@@ -127,6 +161,9 @@ private slots:
     void rotateRight();
     void close();
     void scalingRequest(QSize, ScalingFilter);
+    void scalingRequestInactive(QSize, ScalingFilter);
+    void toggleSplitView();
+    void onSplitFocusToggled();
     void onScalingFinished(QPixmap* scaled, ScalerRequest req);
     void copyCurrentFile(QString destDirectory);
     void moveCurrentFile(QString destDirectory);
