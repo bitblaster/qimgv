@@ -94,6 +94,16 @@ QVector<QString> DirectoryModel::groupedPaths(const QString &filePath) const {
     return dirManager.groupedPaths(filePath);
 }
 
+// everything a grouped sibling's name has past the group's shared base name, so a
+// double-extended sidecar reads as its full tail ("jpg.xmp") rather than just "xmp"
+static QString groupExtensionTail(const QString &filePath, const QString &siblingPath) {
+    QString prefix = QFileInfo(filePath).completeBaseName() + ".";
+    QString siblingName = QFileInfo(siblingPath).fileName();
+    if(siblingName.startsWith(prefix))
+        return siblingName.mid(prefix.length());
+    return QFileInfo(siblingPath).suffix();
+}
+
 QString DirectoryModel::groupNameSuffix(const QString &filePath) const {
     QVector<QString> group = groupedPaths(filePath);
     if(group.size() <= 1)
@@ -101,7 +111,7 @@ QString DirectoryModel::groupNameSuffix(const QString &filePath) const {
     QStringList extras;
     for(const QString &groupedPath : group) {
         if(groupedPath != filePath)
-            extras << QFileInfo(groupedPath).suffix().toLower();
+            extras << groupExtensionTail(filePath, groupedPath).toLower();
     }
     return " + " + extras.join(" + ");
 }
@@ -168,7 +178,7 @@ void DirectoryModel::renameEntry(const QString &oldPath, const QString &newName,
     for(const QString &groupedPath : dirManager.groupedPaths(oldPath)) {
         if(groupedPath == oldPath)
             continue;
-        QString siblingNewName = newBaseName + "." + QFileInfo(groupedPath).suffix();
+        QString siblingNewName = newBaseName + "." + groupExtensionTail(oldPath, groupedPath);
         FileOperations::rename(groupedPath, siblingNewName, force, result);
         qApp->processEvents();
         if(result != FileOpResult::SUCCESS)

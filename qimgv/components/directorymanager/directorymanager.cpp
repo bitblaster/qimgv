@@ -382,19 +382,36 @@ static QString groupingPriorityScore(const QString &path, const QStringList &pri
     return QStringLiteral("1%1").arg(ext);
 }
 
+QString DirectoryManager::groupKey(const FSEntry &entry, const QStringList &priorityList) const {
+    QFileInfo fi(entry.path);
+    QString base = fi.completeBaseName();
+    // a file that is viewable on its own keeps its plain base name; anything else was only
+    // scanned because its extension is in the priority list, i.e. it is a sidecar, so keep
+    // peeling extensions off while what remains still names a groupable file
+    // (pippo.jpg.xmp -> pippo.jpg -> pippo), leaving names that merely contain dots alone
+    // (my.photo.xmp -> my.photo, since "photo" is no extension we know)
+    if(!regex.match(entry.name).hasMatch()) {
+        forever {
+            QString innerSuffix = QFileInfo(base).suffix().toLower();
+            if(innerSuffix.isEmpty() || !(regex.match(base).hasMatch() || priorityList.contains(innerSuffix)))
+                break;
+            base = QFileInfo(base).completeBaseName();
+        }
+    }
+    return fi.absolutePath() + "/" + base;
+}
+
 void DirectoryManager::groupEntries(std::vector<FSEntry> &entryVec) {
     fileGroups.clear();
     if(!settings->groupingEnabled() || entryVec.empty())
         return;
 
+    QStringList priorityList = settings->groupingExtensionPriorityList();
     // group indices by directory + base name (without extension), case-sensitive
     QHash<QString, QVector<int>> groups;
-    for(int i = 0; i < (int)entryVec.size(); i++) {
-        QFileInfo fi(entryVec[i].path);
-        groups[fi.absolutePath() + "/" + fi.completeBaseName()].append(i);
-    }
+    for(int i = 0; i < (int)entryVec.size(); i++)
+        groups[groupKey(entryVec[i], priorityList)].append(i);
 
-    QStringList priorityList = settings->groupingExtensionPriorityList();
     std::vector<FSEntry> result;
     result.reserve(entryVec.size());
     for(auto it = groups.constBegin(); it != groups.constEnd(); ++it) {
