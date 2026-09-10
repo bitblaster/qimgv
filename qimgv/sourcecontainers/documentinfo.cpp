@@ -356,7 +356,11 @@ void DocumentInfo::loadExifTags() {
                 {7, QObject::tr("Mirrored horizontal, rotated 90° CW")},
                 {8, QObject::tr("Rotated 90° CCW")},
             };
+#if EXIV2_TEST_VERSION(0, 28, 0)
+            auto tableIt = orientationTable.constFind(static_cast<long>(it->toInt64()));
+#else
             auto tableIt = orientationTable.constFind(it->toLong());
+#endif
             if(tableIt != orientationTable.constEnd())
                 exifTags.insert("Orientation", tableIt.value());
             else
