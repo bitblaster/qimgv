@@ -152,6 +152,16 @@ void ImageViewerV2::readSettings() {
     }
     // set bg color
     onFullscreenModeChanged(mIsFullscreen);
+    if(settings->imageReloadPending()) {
+        // the image on screen is on its way out: keep the new values, but don't re-apply
+        // them to it. Doing so also fires a scale request, and serving one for an image
+        // that has fallen out of the cache decodes the file again - seconds, for a raw.
+        // showImage() applies all of this to the replacement when it arrives.
+        mScalingFilter = settings->scalingFilter();
+        pixmapItem.setTransformationMode(selectTransformationMode());
+        imageFitMode = imageFitModeDefault;
+        return;
+    }
     updateMinScale();
     setScalingFilter(settings->scalingFilter());
     setFitMode(imageFitModeDefault);

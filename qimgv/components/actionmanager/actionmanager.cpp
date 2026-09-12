@@ -99,6 +99,7 @@ void ActionManager::initDefaults() {
     actionManager->defaults.insert(InputMap::keyNameCtrl() + "+V", "pasteFile");
     actionManager->defaults.insert("S", "splitView");
     actionManager->defaults.insert("Tab", "splitViewSwitchFocus");
+    actionManager->defaults.insert("G", "toggleGrouping");
 
 #ifdef __APPLE__
     actionManager->defaults.insert(InputMap::keyNameAlt() + "+Up", "zoomIn");

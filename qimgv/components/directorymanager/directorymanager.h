@@ -22,6 +22,7 @@
 #include "watchers/directorywatcher.h"
 #include "utils/stuff.h"
 #include "sourcecontainers/fsentry.h"
+#include "utils/filegrouping.h"
 
 #ifdef Q_OS_WIN32
 #include "windows.h"
@@ -116,10 +117,6 @@ private:
     // collapses entryVec down to one representative FSEntry per base name group,
     // and fills fileGroups accordingly; no-op if grouping is disabled
     void groupEntries(std::vector<FSEntry> &entryVec);
-    // the key an entry is grouped under: its directory + base name, with every trailing
-    // extension stripped off sidecar files so a double-extended sidecar (pippo.jpg.xmp)
-    // lands in the group of the file it belongs to (pippo.jpg) instead of a group of its own
-    QString groupKey(const FSEntry &entry, const QStringList &priorityList) const;
 
     // natural-order string comparison: the base name and the extension are compared
     // separately (as file managers like Dolphin do), falling back to comparing the whole

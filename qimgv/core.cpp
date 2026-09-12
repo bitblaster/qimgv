@@ -211,10 +211,16 @@ void Core::initActions() {
     connect(actionManager, &ActionManager::prevDirectory, this, qOverload<>(&Core::prevDirectory));
     connect(actionManager, &ActionManager::print, this, &Core::print);
     connect(actionManager, &ActionManager::splitView, this, &Core::toggleSplitView);
+    connect(actionManager, &ActionManager::splitViewNone, this, &Core::splitViewNone);
+    connect(actionManager, &ActionManager::splitViewHorizontal, this, &Core::splitViewHorizontal);
+    connect(actionManager, &ActionManager::splitViewVertical, this, &Core::splitViewVertical);
     connect(actionManager, &ActionManager::splitViewSwitchFocus, mw, &MW::toggleSplitFocus);
     connect(mw, &MW::splitFocusToggled, this, &Core::onSplitFocusToggled);
     connect(actionManager, &ActionManager::toggleFullscreenInfoBar, this, &Core::toggleFullscreenInfoBar);
     connect(actionManager, &ActionManager::pasteFile, this, &Core::openFromClipboard);
+    connect(actionManager, &ActionManager::toggleGrouping, this, &Core::toggleGrouping);
+    connect(actionManager, &ActionManager::groupingOn, this, &Core::groupingOn);
+    connect(actionManager, &ActionManager::groupingOff, this, &Core::groupingOff);
 }
 
 void Core::loadTranslation() {
@@ -284,6 +290,53 @@ void Core::toggleShuffle() {
         mw->showMessage(tr("Shuffle mode: ON"));
     }
     shuffle = !shuffle;
+    updateInfoString();
+}
+
+void Core::toggleGrouping() {
+    setGrouping(!settings->groupingEnabled());
+}
+
+void Core::groupingOn() {
+    setGrouping(true);
+}
+
+void Core::groupingOff() {
+    setGrouping(false);
+}
+
+void Core::setGrouping(bool enabled) {
+    if(settings->groupingEnabled() == enabled) {
+        // nothing to rebuild, but still confirm which mode we are in
+        mw->showMessage(enabled ? tr("Grouping: ON") : tr("Grouping: OFF"));
+        return;
+    }
+    settings->setGroupingEnabled(enabled);
+    // the directory listing is rebuilt from scratch, so a file a pane sits on may no longer
+    // be in it: turning grouping on tucks it into a group that is shown as another file.
+    // Both panes have to follow their group's representative, or they keep pointing at a
+    // path the model no longer knows - which leaves the info bar blank and makes navigation
+    // restart from the first file. Turning grouping off keeps every path valid, so there is
+    // nothing to follow in that direction.
+    QString activeTarget = activePane->filePath, inactiveTarget = inactivePane->filePath;
+    if(enabled) {
+        activeTarget = FileGrouping::resolvePath(activeTarget);
+        if(splitMode != SPLIT_NONE)
+            inactiveTarget = FileGrouping::resolvePath(inactiveTarget);
+    }
+    bool replacingImages = (activeTarget != activePane->filePath) ||
+                           (splitMode != SPLIT_NONE && inactiveTarget != inactivePane->filePath);
+    settings->setImageReloadPending(replacingImages);
+    settings->sendChangeNotification();
+    settings->setImageReloadPending(false);
+    mw->showMessage(enabled ? tr("Grouping: ON") : tr("Grouping: OFF"));
+    if(!activeTarget.isEmpty() && activeTarget != activePane->filePath) {
+        int index = model->indexOfFile(activeTarget);
+        if(index != -1)
+            loadFileIndex(index, true, settings->usePreloader());
+    }
+    if(splitMode != SPLIT_NONE && !inactiveTarget.isEmpty() && inactiveTarget != inactivePane->filePath)
+        loadInactiveImage(inactiveTarget);
     updateInfoString();
 }
 
@@ -1343,13 +1396,23 @@ void Core::print() {
     p.exec();
 }
 
+/* The image to hand the scaler for a pane. Never ask the model to produce one it doesn't
+ * already hold: on a cache miss DirectoryModel::getImage() decodes the file on this thread,
+ * which for a raw file costs seconds - and it doesn't even keep the result, so the next
+ * request pays it again. The pane holds the decoded image anyway, and the only reason to
+ * prefer the model's copy is that a reload (e.g. after a lossless save) hands out a new one.
+ */
+std::shared_ptr<Image> Core::imageForScaling(const PaneState *pane) const {
+    if(model->isLoaded(pane->filePath))
+        return model->getImage(pane->filePath);
+    return pane->img;
+}
+
 void Core::scalingRequest(QSize size, ScalingFilter filter) {
     // filter out an unnecessary scale request at statup
     if(mw->isVisible() && activePane->hasImage) {
         activePane->scaleRequest = {true, size, filter};
-        std::shared_ptr<Image> forScale = model->getImage(activePane->filePath);
-        if(!forScale)
-            forScale = activePane->img;
+        std::shared_ptr<Image> forScale = imageForScaling(activePane);
         if(forScale)
             model->scaler->requestScaled(ScalerRequest(forScale, size, activePane->filePath, filter));
         else
@@ -1360,9 +1423,7 @@ void Core::scalingRequest(QSize size, ScalingFilter filter) {
 void Core::scalingRequestInactive(QSize size, ScalingFilter filter) {
     if(mw->isVisible() && splitMode != SPLIT_NONE && !inactivePane->filePath.isEmpty()) {
         inactivePane->scaleRequest = {true, size, filter};
-        std::shared_ptr<Image> forScale = model->getImage(inactivePane->filePath);
-        if(!forScale)
-            forScale = inactivePane->img;
+        std::shared_ptr<Image> forScale = imageForScaling(inactivePane);
         if(forScale)
             model->scaler->requestScaled(ScalerRequest(forScale, size, inactivePane->filePath, filter));
         else
@@ -1419,6 +1480,10 @@ bool Core::loadPath(QString path) {
     if(fileInfo.isDir()) {
         state.directoryPath = QDir(path).absolutePath();
     } else if(fileInfo.isFile()) {
+        // with grouping on, the file we were handed may not be the one its group is shown
+        // as (e.g. opening pippo.jpg while pippo.cr2 takes priority) - open that one instead
+        path = FileGrouping::resolvePath(fileInfo.absoluteFilePath());
+        fileInfo.setFile(path);
         state.directoryPath = fileInfo.absolutePath();
         if(model->directoryPath() != state.directoryPath)
             state.delayModel = true;
@@ -1752,9 +1817,29 @@ void Core::toggleSplitView() {
         setSplitViewMode(SPLIT_NONE);
         return;
     }
-    if(mw->currentViewMode() != MODE_DOCUMENT || !activePane->hasImage || activePane->filePath.isEmpty())
+    requestSplitViewMode(SPLIT_HORIZONTAL);
+}
+
+void Core::splitViewNone() {
+    requestSplitViewMode(SPLIT_NONE);
+}
+
+void Core::splitViewHorizontal() {
+    requestSplitViewMode(SPLIT_HORIZONTAL);
+}
+
+void Core::splitViewVertical() {
+    requestSplitViewMode(SPLIT_VERTICAL);
+}
+
+/* Splitting needs an image to split off from, but only when we are not in a
+ * split already; switching between the two split layouts is always allowed.
+ */
+void Core::requestSplitViewMode(SplitViewMode mode) {
+    if(mode != SPLIT_NONE && splitMode == SPLIT_NONE &&
+       (mw->currentViewMode() != MODE_DOCUMENT || !activePane->hasImage || activePane->filePath.isEmpty()))
         return;
-    setSplitViewMode(SPLIT_HORIZONTAL);
+    setSplitViewMode(mode);
 }
 
 void Core::setSplitViewMode(SplitViewMode mode) {

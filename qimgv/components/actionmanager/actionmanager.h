@@ -126,6 +126,12 @@ signals:
     void pasteFile();
     void splitView();
     void splitViewSwitchFocus();
+    void toggleGrouping();
+    void splitViewNone();
+    void splitViewHorizontal();
+    void splitViewVertical();
+    void groupingOn();
+    void groupingOff();
 };
 
 extern ActionManager *actionManager;

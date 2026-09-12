@@ -15,6 +15,7 @@
 #include "components/scriptmanager/scriptmanager.h"
 #include "gui/mainwindow.h"
 #include "utils/randomizer.h"
+#include "utils/filegrouping.h"
 #include "gui/dialogs/printdialog.h"
 
 #ifdef __GLIBC__
@@ -114,7 +115,10 @@ private:
 
     SplitViewMode splitMode = SPLIT_NONE;
     void setSplitViewMode(SplitViewMode mode);
+    void requestSplitViewMode(SplitViewMode mode);
+    void setGrouping(bool enabled);
     void loadInactiveImage(const QString &path);
+    std::shared_ptr<Image> imageForScaling(const PaneState *pane) const;
     QTimer slideshowTimer;
 
     void startSlideshowTimer();
@@ -163,6 +167,9 @@ private slots:
     void scalingRequest(QSize, ScalingFilter);
     void scalingRequestInactive(QSize, ScalingFilter);
     void toggleSplitView();
+    void splitViewNone();
+    void splitViewHorizontal();
+    void splitViewVertical();
     void onSplitFocusToggled();
     void onScalingFinished(QPixmap* scaled, ScalerRequest req);
     void copyCurrentFile(QString destDirectory);
@@ -207,6 +214,9 @@ private slots:
     void onDraggedOut(QList<QString> paths);
     void onDropIn(const QMimeData *mimeData, QObject* source);
     void toggleShuffle();
+    void toggleGrouping();
+    void groupingOn();
+    void groupingOff();
     void onModelLoaded();
     void outputError(const FileOpResult &error) const;
     void showOpenDialog();

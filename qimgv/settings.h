@@ -334,11 +334,20 @@ public:
     // parsed, trimmed, lowercased extensions from groupingExtensionPriority(), in order
     QStringList groupingExtensionPriorityList();
 
+    /* Set around a settingsChanged() broadcast that is known to be followed by different
+     * images being loaded into the panes. Components that would re-apply the new settings
+     * to the image currently on screen can skip that work: it is about to be thrown away,
+     * and the replacement applies everything on arrival. Transient, never persisted.
+     */
+    bool imageReloadPending() const;
+    void setImageReloadPending(bool mode);
+
 private:
     explicit Settings(QObject *parent = nullptr);
     QSettings *settingsConf, *stateConf, *themeConf;
     QDir *mTmpDir, *mThumbCacheDir, *mConfDir;
     ColorScheme mColorScheme;
+    bool mImageReloadPending = false;
     QMultiMap<QByteArray, QByteArray> mVideoFormatsMap; // [mimetype, format]
     void loadTheme();
     void saveTheme();

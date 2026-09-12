@@ -14,4 +14,5 @@ target_sources(qimgv PRIVATE
     fileoperations.cpp
     losslessjpegtransform.cpp
     exifmetadata.cpp
+    filegrouping.cpp
 )

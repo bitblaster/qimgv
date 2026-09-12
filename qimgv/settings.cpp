@@ -1267,6 +1267,14 @@ void Settings::setGroupingExtensionPriority(QString priority) {
     settingsConf->setValue("groupingExtensionPriority", priority);
 }
 
+bool Settings::imageReloadPending() const {
+    return mImageReloadPending;
+}
+
+void Settings::setImageReloadPending(bool mode) {
+    mImageReloadPending = mode;
+}
+
 QStringList Settings::groupingExtensionPriorityList() {
     QStringList list;
     for(const QString &ext : groupingExtensionPriority().split(',', Qt::SkipEmptyParts)) {
