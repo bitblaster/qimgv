@@ -99,5 +99,8 @@ void Actions::init() {
     mActions.insert("splitViewVertical", QVersionNumber(1,0,6));
     mActions.insert("groupingOn", QVersionNumber(1,0,6));
     mActions.insert("groupingOff", QVersionNumber(1,0,6));
+    mActions.insert("reverseSearchGoogle", QVersionNumber(1,0,6));
+    mActions.insert("reverseSearchBing", QVersionNumber(1,0,6));
+    mActions.insert("reverseSearchTinEye", QVersionNumber(1,0,6));
 }
 

@@ -7,6 +7,11 @@ target_sources(qimgv PRIVATE
     scriptmanager/scriptmanager.cpp
     actionmanager/actionmanager.cpp
 
+    reversesearch/reversesearchmanager.cpp
+    reversesearch/providers/googlelensprovider.cpp
+    reversesearch/providers/bingprovider.cpp
+    reversesearch/providers/tineyeprovider.cpp
+
     cache/cache.cpp
     cache/cacheitem.cpp
     cache/thumbnailcache.cpp

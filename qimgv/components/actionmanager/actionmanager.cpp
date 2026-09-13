@@ -100,6 +100,7 @@ void ActionManager::initDefaults() {
     actionManager->defaults.insert("S", "splitView");
     actionManager->defaults.insert("Tab", "splitViewSwitchFocus");
     actionManager->defaults.insert("G", "toggleGrouping");
+    actionManager->defaults.insert(InputMap::keyNameCtrl() + "+G", "reverseSearchGoogle");
 
 #ifdef __APPLE__
     actionManager->defaults.insert(InputMap::keyNameAlt() + "+Up", "zoomIn");

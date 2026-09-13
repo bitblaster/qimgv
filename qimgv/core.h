@@ -13,6 +13,7 @@
 #include "components/directorymodel.h"
 #include "components/directorypresenter.h"
 #include "components/scriptmanager/scriptmanager.h"
+#include "components/reversesearch/reversesearchmanager.h"
 #include "gui/mainwindow.h"
 #include "utils/randomizer.h"
 #include "utils/filegrouping.h"
@@ -96,6 +97,9 @@ private:
     std::shared_ptr<DirectoryModel> model;
 
     DirectoryPresenter thumbPanelPresenter, folderViewPresenter;
+
+    // built on first use - most sessions never reverse search anything
+    std::unique_ptr<ReverseSearchManager> reverseSearch;
 
     void rotateByDegrees(int degrees);
     void reset();
@@ -234,5 +238,9 @@ private slots:
     void prevDirectory(bool selectLast);
     void prevDirectory();
     void print();
+    void reverseSearchGoogle();
+    void reverseSearchBing();
+    void reverseSearchTinEye();
+    void runReverseSearch(QString providerId);
     void modelDelayLoad();
 };

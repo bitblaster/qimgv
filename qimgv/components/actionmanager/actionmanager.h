@@ -132,6 +132,9 @@ signals:
     void splitViewVertical();
     void groupingOn();
     void groupingOff();
+    void reverseSearchGoogle();
+    void reverseSearchBing();
+    void reverseSearchTinEye();
 };
 
 extern ActionManager *actionManager;

@@ -221,6 +221,9 @@ void Core::initActions() {
     connect(actionManager, &ActionManager::toggleGrouping, this, &Core::toggleGrouping);
     connect(actionManager, &ActionManager::groupingOn, this, &Core::groupingOn);
     connect(actionManager, &ActionManager::groupingOff, this, &Core::groupingOff);
+    connect(actionManager, &ActionManager::reverseSearchGoogle, this, &Core::reverseSearchGoogle);
+    connect(actionManager, &ActionManager::reverseSearchBing, this, &Core::reverseSearchBing);
+    connect(actionManager, &ActionManager::reverseSearchTinEye, this, &Core::reverseSearchTinEye);
 }
 
 void Core::loadTranslation() {
@@ -1394,6 +1397,47 @@ void Core::print() {
     p.setImage(img->getImage());
     p.setOutputPath(pdfPath);
     p.exec();
+}
+
+void Core::reverseSearchGoogle() {
+    runReverseSearch("google");
+}
+
+void Core::reverseSearchBing() {
+    runReverseSearch("bing");
+}
+
+void Core::reverseSearchTinEye() {
+    runReverseSearch("tineye");
+}
+
+/* Hand what we are currently showing - edits included - to a reverse image search engine and
+ * open whatever page it answers with. The upload happens in the background; the browser only
+ * opens once the engine has told us where the results live.
+ */
+void Core::runReverseSearch(QString providerId) {
+    if(!model || model->isEmpty())
+        return;
+    auto img = model->getImage(selectedPath());
+    if(!img) {
+        mw->showError(tr("Could not open image"));
+        return;
+    }
+    if(img->type() == DocumentType::VIDEO) {
+        mw->showError(tr("Cannot search video files"));
+        return;
+    }
+    if(!reverseSearch) {
+        reverseSearch = std::make_unique<ReverseSearchManager>(this);
+        connect(reverseSearch.get(), &ReverseSearchManager::ready, this, [](QUrl url) {
+            QDesktopServices::openUrl(url);
+        });
+        connect(reverseSearch.get(), &ReverseSearchManager::failed, this, [this](QString message) {
+            mw->showError(message);
+        });
+    }
+    mw->showMessage(tr("Searching..."));
+    reverseSearch->search(providerId, img->getImage());
 }
 
 /* The image to hand the scaler for a pane. Never ask the model to produce one it doesn't
