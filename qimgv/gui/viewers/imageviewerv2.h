@@ -200,6 +200,9 @@ private:
     Qt::TransformationMode selectTransformationMode();
     void centerIfNecessary();
     void snapToEdges();
+    int pendingScrollPos(QScrollBar *bar, QTimeLine *timeLine) const;
+    QPoint pendingScrollPos() const;
+    int nextScrollPos(QScrollBar *bar, QTimeLine *timeLine, int delta) const;
     void scrollSmooth(int dx, int dy);
     void scrollPrecise(int dx, int dy);
     void updateFitWindowScale();
