@@ -1722,8 +1722,11 @@ void Core::onLoadFailed(const QString &path) {
 void Core::onModelItemReady(std::shared_ptr<Image> img, const QString &path) {
     // both panes can sit on the same file, and the reload after a lossless save
     // hands out a brand new Image - the inactive pane has to pick it up too, or
-    // it keeps a stale one that still claims to have unsaved edits
-    if(splitMode != SPLIT_NONE && path == inactivePane->filePath)
+    // it keeps a stale one that still claims to have unsaved edits.
+    // Handing it the very same Image it already shows would only throw away
+    // its zoom and pan, which is what happens when the active pane navigates
+    // onto the file the other pane is sitting on.
+    if(splitMode != SPLIT_NONE && path == inactivePane->filePath && img != inactivePane->img)
         guiSetImageInactive(img);
     if(path == activePane->filePath) {
         guiSetImage(img);
