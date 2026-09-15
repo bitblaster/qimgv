@@ -8,6 +8,7 @@ target_sources(qimgv PRIVATE
     actionmanager/actionmanager.cpp
 
     reversesearch/reversesearchmanager.cpp
+    reversesearch/localuploadserver.cpp
     reversesearch/providers/googlelensprovider.cpp
     reversesearch/providers/bingprovider.cpp
     reversesearch/providers/tineyeprovider.cpp

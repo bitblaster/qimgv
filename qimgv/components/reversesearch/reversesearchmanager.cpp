@@ -31,12 +31,82 @@ void ReverseSearchManager::search(QString providerId, std::shared_ptr<const QIma
         activeReply->abort();
         activeReply = nullptr;
     }
+    uploadServer.stop();
     QByteArray jpeg = encodeJpeg(*image);
     if(jpeg.isEmpty()) {
         emit failed(tr("Could not encode image"));
         return;
     }
+    BrowserUpload upload = provider->browserUpload();
+    if(upload.isValid()) {
+        searchViaBrowser(upload, jpeg, provider);
+        return;
+    }
     send(provider->buildRequest(jpeg), provider);
+}
+
+/* The page the browser is sent to, and the frame that does the work. The image rides along as
+ * base64 inside the frame rather than as a file of its own: the frame is sandboxed, so its
+ * origin is opaque and fetching anything from us would be a cross origin request we'd have to
+ * open up for. Inlining costs a third of the image in size, on loopback, and saves all that.
+ */
+static QString uploadFrameHtml(const BrowserUpload &upload, const QByteArray &jpeg) {
+    // base64 is alphanumeric, so nothing in here can break out of the string it goes into
+    return QStringLiteral(R"(<!doctype html>
+<meta charset="utf-8">
+<body>
+<script>
+const b64 = "%1";
+const bin = atob(b64);
+const bytes = new Uint8Array(bin.length);
+for(let i = 0; i < bin.length; i++)
+    bytes[i] = bin.charCodeAt(i);
+const file = new File([new Blob([bytes], {type: "image/jpeg"})], "image.jpg", {type: "image/jpeg"});
+const form = document.createElement("form");
+form.method = "POST";
+form.enctype = "multipart/form-data";
+form.action = "%2";
+form.target = "_top";
+const input = document.createElement("input");
+input.type = "file";
+input.name = "%3";
+const transfer = new DataTransfer();
+transfer.items.add(file);
+input.files = transfer.files;
+form.appendChild(input);
+document.body.appendChild(form);
+form.submit();
+</script>
+</body>
+)").arg(QString::fromLatin1(jpeg.toBase64()),
+        upload.action.toString(QUrl::FullyEncoded),
+        upload.fieldName);
+}
+
+static QString uploadPageHtml(const QString &engineName) {
+    return QStringLiteral(R"(<!doctype html>
+<meta charset="utf-8">
+<title>%1</title>
+<style>
+body { font-family: sans-serif; margin: 3em; color: #444; }
+</style>
+<body>
+<p>%2</p>
+<iframe src="inner" sandbox="allow-scripts allow-forms allow-top-navigation"
+        style="width: 0; height: 0; border: 0;"></iframe>
+</body>
+)").arg(engineName, ReverseSearchManager::tr("Uploading image..."));
+}
+
+void ReverseSearchManager::searchViaBrowser(const BrowserUpload &upload, const QByteArray &jpeg,
+                                            const ReverseSearchProvider *provider) {
+    QUrl pageUrl = uploadServer.serve(uploadPageHtml(provider->displayName()),
+                                      uploadFrameHtml(upload, jpeg));
+    if(pageUrl.isEmpty()) {
+        emit failed(tr("Could not open a local port for ") + provider->displayName());
+        return;
+    }
+    emit ready(pageUrl);
 }
 
 /* Re-encode whatever we are showing as a moderately sized jpeg. This makes the source format
