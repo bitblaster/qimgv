@@ -1042,8 +1042,9 @@ void MW::onInfoUpdated() {
         if(info.edited)
             windowTitle.prepend("* ");
 
-        infoBarFullscreen->setInfo(posString, info.fileName + (info.edited ? "  *" : ""), resString + "  " + sizeString);
-        infoBarWindowed->setInfo(posString, info.fileName + (info.edited ? "  *" : ""), resString + "  " + sizeString + " " + states);
+        QString barName = info.fileName + info.groupNameSuffix + (info.edited ? "  *" : "");
+        infoBarFullscreen->setInfo(posString, barName, resString + "  " + sizeString);
+        infoBarWindowed->setInfo(posString, barName, resString + "  " + sizeString + " " + states);
     }
     setWindowTitle(windowTitle);
 }
