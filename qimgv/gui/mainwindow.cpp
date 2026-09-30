@@ -18,7 +18,6 @@ MW::MW(QWidget *parent)
       infoBarFullscreen(nullptr),
       imageInfoOverlay(nullptr),
       imageInfoOverlaySecondary(nullptr),
-      infoOverlayVisible{false, false},
       floatingMessage(nullptr),
       cropPanel(nullptr),
       cropOverlay(nullptr)
@@ -199,7 +198,8 @@ void MW::setSplitViewMode(SplitViewMode mode) {
         imageInfoOverlaySecondary->hide();
     } else {
         viewerWidgetSecondary->setInteractionEnabled(viewerWidget->interactionEnabled());
-        if(infoOverlayVisible[1])
+        // the info panel is open in both panes or in neither
+        if(!imageInfoOverlay->isHidden())
             imageInfoOverlaySecondary->show();
     }
 }
@@ -485,10 +485,13 @@ void MW::toggleFullscreenInfoBar() {
 void MW::toggleImageInfoOverlay() {
     if(centralWidget->currentViewMode() == MODE_FOLDERVIEW)
         return;
-    auto overlay = activeInfoOverlay();
-    bool show = overlay->isHidden();
-    show ? overlay->show() : overlay->hide();
-    infoOverlayVisible[splitFocusIndex()] = show;
+    // both panes at once, so their tags can be compared side by side
+    bool show = imageInfoOverlay->isHidden();
+    show ? imageInfoOverlay->show() : imageInfoOverlay->hide();
+    if(show && mSplitMode != SPLIT_NONE)
+        imageInfoOverlaySecondary->show();
+    else
+        imageInfoOverlaySecondary->hide();
 }
 
 void MW::toggleRenameOverlay(QString currentName) {
@@ -1039,8 +1042,9 @@ void MW::onInfoUpdated() {
         if(info.edited)
             windowTitle.prepend("* ");
 
-        infoBarFullscreen->setInfo(posString, info.fileName + (info.edited ? "  *" : ""), resString + "  " + sizeString);
-        infoBarWindowed->setInfo(posString, info.fileName + (info.edited ? "  *" : ""), resString + "  " + sizeString + " " + states);
+        QString barName = info.fileName + info.groupNameSuffix + (info.edited ? "  *" : "");
+        infoBarFullscreen->setInfo(posString, barName, resString + "  " + sizeString);
+        infoBarWindowed->setInfo(posString, barName, resString + "  " + sizeString + " " + states);
     }
     setWindowTitle(windowTitle);
 }
