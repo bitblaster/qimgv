@@ -120,8 +120,6 @@ private:
     RenameOverlay *renameOverlay;
 
     ImageInfoOverlayProxy *imageInfoOverlay, *imageInfoOverlaySecondary;
-    // remembered for the session so the second pane's panel comes back with it
-    bool infoOverlayVisible[2];
 
     ControlsOverlay *controlsOverlay;
     FullscreenInfoOverlayProxy *infoBarFullscreen;
